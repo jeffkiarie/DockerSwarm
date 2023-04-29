@@ -1,0 +1,108 @@
+- name: configure_swarm_manager
+  hosts: loadbalancer
+  become: true
+  tasks:
+  - name: Update apt-get
+    apt:
+      update_cache: true
+      cache_valid_time: 3600
+      force_apt_get: true
+
+  - name: Install aptitude using apt
+    apt: name=aptitude state=latest update_cache=yes force_apt_get=yes
+
+  - name: Install required system packages
+    apt: name={{ item }} state=latest update_cache=yes
+    loop: [ 'apt-transport-https', 'ca-certificates', 'curl', 'software-properties-common', 'python3-pip', 'virtualenv', 'python3-setuptools']
+
+  - name: Add Docker GPG apt Key
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add Docker Repository
+    apt_repository:
+      repo: deb https://download.docker.com/linux/ubuntu bionic stable
+      state: present
+
+  - name: Update apt and install docker-ce
+    apt: update_cache=yes name=docker-ce state=latest
+
+  - name: Install Docker Module for Python
+    pip:
+      name: docker
+
+  - name: make sure swarm is not joined
+    command: docker swarm leave
+    ignore_errors: True
+
+  - name: initialize swarm manager
+    shell: 'docker swarm init --advertise-addr {{ ansible_default_ipv4.address }} | grep "docker swarm join --token "'
+    register: workerToken 
+      
+  - name: build join command
+    set_fact:
+        worker: "{{ workerToken }}"
+          
+  - name: add variable
+    add_host:
+        name: "place_holder"
+        shared_variable: "{{ workerToken }}"
+
+  - name: Move key to swarm manager
+    copy:
+      src: ~/.ssh/A4L2.pem
+      dest: ~/.ssh
+  
+  
+- name: configure_handlers
+  hosts: handlers
+  become: true 
+  vars:
+        workerToken: "{{ hostvars['place_holder']['shared_variable'] }}"
+  tasks:
+  - name: Update apt-get
+    apt: 
+      update_cache: true
+      cache_valid_time: 3600
+      force_apt_get: true
+
+  - name: Install aptitude using apt
+    apt: name=aptitude state=latest update_cache=yes force_apt_get=yes
+
+  - name: Install required system packages
+    apt: name={{ item }} state=latest update_cache=yes
+    loop: [ 'apt-transport-https', 'ca-certificates', 'curl', 'software-properties-common', 'python3-pip', 'virtualenv', 'python3-setuptools']
+
+  - name: Add Docker GPG apt Key
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add Docker Repository
+    apt_repository:
+      repo: deb https://download.docker.com/linux/ubuntu bionic stable
+      state: present
+
+  - name: Update apt and install docker-ce
+    apt: update_cache=yes name=docker-ce state=latest
+
+  - name: Install Docker Module for Python
+    pip:
+      name: docker
+
+  - name: Join swarm as worker
+    shell: "sudo {{ workerToken.stdout }}"
+
+- name: Deploy application
+  hosts: loadbalancer
+  become: true
+  tasks:
+    - name: start docker registry, build and push application, and deploy to swarm
+      shell: |
+          apt install -y docker-compose
+          docker service create --name registry --publish published=5000,target=5000 registry:2
+          docker-compose up -d
+          docker-compose push
+          docker stack deploy --compose-file docker-compose.yml stackdemo
+          docker service scale stackdemo_web=3

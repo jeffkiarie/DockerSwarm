@@ -1,0 +1,9 @@
+[loadbalancer]
+35.175.218.99
+[handlers]
+44.211.160.222
+54.88.134.117
+[loadbalancer:vars]
+ansible_user=ubuntu
+[handlers:vars]
+ansible-user=ubuntu

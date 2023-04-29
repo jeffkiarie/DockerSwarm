@@ -1,0 +1,52 @@
+#!/bin/bash
+#Jeffrey Kiarie
+#Create servers for docker-swarm
+
+aws ec2 run-instances --image-id ami-09e67e426f25ce0d7 --count 3 --instance-type t2.micro --key-name A4L2 --security-group-ids default --region  us-east-1
+
+instances=$(aws ec2 describe-instances --region us-east-1 | jq '.Reservations[].Instances[] | select(.State.Name == "running") | .PublicIpAddress' | sed 's/\"//g')
+
+insArray=(${instances})
+
+while [ ${#insArray[@]} -lt 3 ]
+do
+        instances=$(aws ec2 describe-instances --region us-east-1 | jq '.Reservations[].Instances[] | select(.State.Name == "running") | .PublicIpAddress' | sed 's/\"//g')
+        insArray=(${instances})
+        echo ${#insArray[@]}
+        sleep 5
+done
+
+ips=$(aws ec2 describe-instances --region us-east-1 | jq '.Reservations[].Instances[] | select(.State.Name == "running") | .PublicIpAddress' | sed 's/\"//g')
+manager=$(echo $ips | cut -d ' ' -f 1)
+
+echo "[loadbalancer]" > "lb.inventory"
+echo $manager >> "lb.inventory"
+
+IFS=$'\n' 
+serverArray=(${ips})
+
+i=1
+echo  "[handlers]" >> "lb.inventory"
+while [ $i -lt ${#serverArray[@]} ]
+do
+        ip=$(echo ${serverArray[$i]} | cut -d ' ' -f 1)
+        echo $ip >> "lb.inventory"
+
+        i=$(($i+1))     
+done
+
+cat >>lb.inventory << eot
+[loadbalancer:vars]
+ansible_user=ubuntu
+[handlers:vars]
+ansible-user=ubuntu
+eot
+
+#git add lb.inventory
+#git commit -m "Push Changes"
+#git push
+#git checkout Development
+scp -i "~/.ssh/A4L2.pem" app.py docker-compose.yml requirements.txt Dockerfile ubuntu@$manager:~
+#git checkout Configuration
+
+ansible-playbook -i lb.inventory MakePlaybook.yml
